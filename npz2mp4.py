@@ -5,8 +5,10 @@ import subprocess
 import shutil
 
 # --- CONFIG ---
-input_file = "workspace/output/video1.npz"
-output_file = "geometry_16bit_clean.mp4"
+input_file = "workspace/output/AWO_clip2_V1-1612.npz"
+base_name = os.path.splitext(input_file)[0] # removes .mp4
+
+output_file = f"{base_name}_GC.mp4"
 temp_dir = "temp_depth_frames"
 
 if os.path.exists(temp_dir):
@@ -34,6 +36,7 @@ for i, frame in enumerate(disp_16bit):
 # It tells FFmpeg to interpret the 16-bit PNGs and output 10-bit HEVC.
 ffmpeg_cmd = [
     'ffmpeg', '-y',
+    '-hide_banner',
     '-framerate', '25',
     '-i', os.path.join(temp_dir, 'frame_%04d.png'),
     '-c:v', 'libx265',

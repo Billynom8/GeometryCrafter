@@ -3,7 +3,7 @@ name = "geometrycrafter"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "numpy==1.26.4",
+    "numpy<2",
     "torch==2.9.1",
     "torchvision==0.24.1",
     "torchaudio==2.9.1",
@@ -23,6 +23,7 @@ dependencies = [
     "tqdm>=4.67.3",
     "huggingface-hub>=1.4.1",
     "kornia>=0.8.2",
+    "opencv-contrib-python>=4.11.0.86",
 ]
 
 [[tool.uv.index]]

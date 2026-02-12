@@ -1,3 +1,8 @@
+"""
+GeometryCrafter: Video-to-Geometry Generation Script
+Optimized for high-precision 3D geometry extraction from video sequences.
+"""
+
 from pathlib import Path
 import torch
 from decord import VideoReader, cpu
@@ -36,9 +41,38 @@ def main(
     use_extract_interp: bool = False,
     track_time: bool = False,
     low_memory_usage: bool = False
-):
+):    
+    """
+    Main entry point for GeometryCrafter inference.
+
+    Args:
+        video_path (str): Path to the input video file (mp4, avi, etc.).
+        save_folder (str): Directory where the output .npz files will be saved.
+        cache_dir (str): Directory to store downloaded model weights.
+        height (int): Output video height. Must be a multiple of 64.
+        width (int): Output video width. Must be a multiple of 64.
+        downsample_ratio (float): Optional factor to shrink input before processing.
+        num_inference_steps (int): Number of diffusion steps (default 5).
+        guidance_scale (float): Classifier-free guidance scale (usually 1.0).
+        window_size (int): Number of frames processed in one temporal window.
+        decode_chunk_size (int): Frames processed at once by the VAE.
+        overlap (int): Number of overlapping frames between temporal windows.
+        process_length (int): Total number of frames to process. -1 for entire video.
+        process_stride (int): Skip frames (e.g., 2 processes every other frame).
+        seed (int): Random seed for reproducibility.
+        model_type (str): 'diff' for diffusion, 'determ' for deterministic (faster).
+        force_projection (bool): If True, enforces perspective projection constraints.
+        force_fixed_focal (bool): If True, assumes a constant camera focal length.
+        use_extract_interp (bool): Use interpolation during feature extraction.
+        track_time (bool): Print timing information for each stage.
+        low_memory_usage (bool): Flag passed to the pipeline to reduce peak VRAM.
+    """
+    
     assert model_type in ['diff', 'determ']
     set_seed(seed)
+    
+    # --- MODEL LOADING ---
+    print(f"Loading UNet ({model_type})...")
     unet = UNetSpatioTemporalConditionModelVid2vid.from_pretrained(
         'TencentARC/GeometryCrafter',
         subfolder='unet_diff' if model_type == 'diff' else 'unet_determ',
@@ -46,6 +80,8 @@ def main(
         torch_dtype=torch.float16,
         cache_dir=cache_dir
     ).requires_grad_(False).to("cuda", dtype=torch.float16)
+    
+    print("Loading Point Map VAE...")
     point_map_vae = PMapAutoencoderKLTemporalDecoder.from_pretrained(
         'TencentARC/GeometryCrafter',
         subfolder='point_map_vae',
@@ -53,9 +89,13 @@ def main(
         torch_dtype=torch.float32,
         cache_dir=cache_dir
     ).requires_grad_(False).to("cuda", dtype=torch.float32)
+
+    print("Loading Prior Model (MoGe)...")
     prior_model = MoGe(
         cache_dir=cache_dir,
     ).requires_grad_(False).to('cuda', dtype=torch.float32)
+
+    # --- PIPELINE INITIALIZATION ---
     if model_type == 'diff':
         pipe = GeometryCrafterDiffPipeline.from_pretrained(
             "stabilityai/stable-video-diffusion-img2vid-xt",
@@ -82,6 +122,8 @@ def main(
     # bugs at https://github.com/continue-revolution/sd-webui-animatediff/issues/101
     # pipe.enable_xformers_memory_efficient_attention()
     pipe.enable_attention_slicing()
+
+    # --- VIDEO PROCESSING ---
     
     video_base_name = os.path.basename(video_path).split('.')[0]
     vid = VideoReader(video_path, ctx=cpu(0))
@@ -114,6 +156,8 @@ def main(
     save_path = Path(save_folder)
     save_path.mkdir(parents=True, exist_ok=True)
 
+    # --- INFERENCE ---
+    print(f"Starting Geometry Generation for {video_base_name}...")
     with torch.inference_mode():
         rec_point_map, rec_valid_mask = pipe(
             frames_tensor,
@@ -141,6 +185,7 @@ def main(
             str(save_path / f"{video_base_name}.npz"), 
             point_map=rec_point_map.detach().cpu().numpy().astype(np.float16), 
             mask=rec_valid_mask.detach().cpu().numpy().astype(np.bool_))
+        print(f"Done! Result saved to {out_file}")
 
 if __name__ == "__main__":
     Fire(main)

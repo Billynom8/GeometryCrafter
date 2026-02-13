@@ -81,7 +81,11 @@ def load_16bit_png(path: Path) -> np.ndarray:
 
 
 def apply_joint_bilateral_filter(
-    disparity: np.ndarray, reference: np.ndarray, d: int = 9, sigma_color: float = 0.1, sigma_space: float = 0.1
+    disparity: np.ndarray,
+    reference: np.ndarray,
+    d: int = 9,
+    sigma_color: float = 0.1,
+    sigma_space: float = 0.1,
 ) -> np.ndarray:
     """Applies joint bilateral filter to disparity map.
 
@@ -100,11 +104,22 @@ def apply_joint_bilateral_filter(
     disp_u16 = (disparity * 65535).astype(np.uint16)
     ref_u8 = (reference * 255).astype(np.uint8)
 
-    filtered = cv2.ximgproc_JointBilateralFilter(
-        ref_u8, disp_u16, d=d, sigmaColor=sigma_color * 255, sigmaSpace=sigma_space * 255
-    )
+    if hasattr(cv2, "ximgproc_JointBilateralFilter"):
+        filtered = cv2.ximgproc_JointBilateralFilter(
+            ref_u8,
+            disp_u16,
+            d=d,
+            sigmaColor=sigma_color * 255,
+            sigmaSpace=sigma_space * 255,
+        )
+    else:
+        disp_f32 = (disparity * 65535).astype(np.float32)
+        filtered = cv2.bilateralFilter(
+            disp_f32, d, sigma_color * 255, sigma_space * 255
+        )
+        filtered = filtered.astype(np.float32) / 65535.0
 
-    return filtered.astype(np.float32) / 65535.0
+    return filtered
 
 
 def frames_to_video_ffmpeg(
@@ -382,18 +397,60 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Post-process merged frames to video")
     parser.add_argument(
-        "--merged-frames-folder", "-i", default="workspace/merged_frames", help="Folder containing merged PNG frames"
+        "--merged-frames-folder",
+        "-i",
+        default="workspace/merged_frames",
+        help="Folder containing merged PNG frames",
     )
-    parser.add_argument("--original-video", "-v", required=True, help="Path to original video")
-    parser.add_argument("--output-path", "-o", default="workspace/output.mp4", help="Output video path")
-    parser.add_argument("--encoder", "-e", default="x265", choices=["x265", "vp9", "h264"], help="Video encoder")
-    parser.add_argument("--preset", default="medium", help="Encoding preset (ultrafast to veryslow)")
-    parser.add_argument("--crf", type=int, default=18, help="Constant Rate Factor (lower = better quality)")
-    parser.add_argument("--bilateral-d", type=int, default=9, help="Bilateral filter diameter (0 to disable)")
-    parser.add_argument("--bilateral-sigma-color", type=float, default=0.1, help="Bilateral filter sigma color")
-    parser.add_argument("--bilateral-sigma-space", type=float, default=0.1, help="Bilateral filter sigma space")
-    parser.add_argument("--fps", type=float, default=None, help="Output FPS (auto-detect from original if not set)")
-    parser.add_argument("--bitdepth", type=int, default=10, choices=[8, 10], help="Output bit depth")
+    parser.add_argument(
+        "--original-video", "-v", required=True, help="Path to original video"
+    )
+    parser.add_argument(
+        "--output-path", "-o", default="workspace/output.mp4", help="Output video path"
+    )
+    parser.add_argument(
+        "--encoder",
+        "-e",
+        default="x265",
+        choices=["x265", "vp9", "h264"],
+        help="Video encoder",
+    )
+    parser.add_argument(
+        "--preset", default="medium", help="Encoding preset (ultrafast to veryslow)"
+    )
+    parser.add_argument(
+        "--crf",
+        type=int,
+        default=18,
+        help="Constant Rate Factor (lower = better quality)",
+    )
+    parser.add_argument(
+        "--bilateral-d",
+        type=int,
+        default=9,
+        help="Bilateral filter diameter (0 to disable)",
+    )
+    parser.add_argument(
+        "--bilateral-sigma-color",
+        type=float,
+        default=0.1,
+        help="Bilateral filter sigma color",
+    )
+    parser.add_argument(
+        "--bilateral-sigma-space",
+        type=float,
+        default=0.1,
+        help="Bilateral filter sigma space",
+    )
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=None,
+        help="Output FPS (auto-detect from original if not set)",
+    )
+    parser.add_argument(
+        "--bitdepth", type=int, default=10, choices=[8, 10], help="Output bit depth"
+    )
 
     args = parser.parse_args()
 

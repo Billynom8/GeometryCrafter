@@ -96,7 +96,9 @@ def apply_scale_shift(image: np.ndarray, scale: float, shift: float) -> np.ndarr
     return np.clip(transformed, 0, 1)
 
 
-def create_blend_weights(num_overlap: int, blend_mode: BlendMode, sigma: float = 6.0) -> np.ndarray:
+def create_blend_weights(
+    num_overlap: int, blend_mode: BlendMode, sigma: float = 6.0
+) -> np.ndarray:
     """Creates blending weights for overlap region.
 
     Args:
@@ -117,7 +119,9 @@ def create_blend_weights(num_overlap: int, blend_mode: BlendMode, sigma: float =
     return weights
 
 
-def blend_frames(frame_a: np.ndarray, frame_b: np.ndarray, weights: np.ndarray) -> np.ndarray:
+def blend_frames(
+    frame_a: np.ndarray, frame_b: np.ndarray, weights: np.ndarray
+) -> np.ndarray:
     """Blends two frames using pre-computed weights.
 
     Args:
@@ -204,7 +208,9 @@ class Merger:
 
         segments = self.config.segment_mapping.segments
         overlap = self.config.segment_mapping.overlap
-        blend_weights = create_blend_weights(overlap, self.config.blend_mode, self.config.blend_sigma)
+        blend_weights = create_blend_weights(
+            overlap, self.config.blend_mode, self.config.blend_sigma
+        )
 
         if len(segments) == 1:
             return self._merge_single_segment(segments_folder, output_folder)
@@ -220,6 +226,8 @@ class Merger:
             segment = segments[seg_idx]
             num_frames = segment.frame_count
 
+            frames_before_this_segment = sum(s.frame_count for s in segments[:seg_idx])
+
             for frame_i in range(num_frames):
                 frame_path = seg_dir / f"frame_{frame_i:04d}.png"
                 if not frame_path.exists():
@@ -232,24 +240,29 @@ class Merger:
                     if align:
                         img = apply_scale_shift(img, align["scale"], align["shift"])
 
-                is_overlap_frame = seg_idx > 0 and frame_i < overlap and global_frame_idx > 0
+                is_overlap_frame = seg_idx > 0 and frame_i < overlap
 
-                if is_overlap_frame and seg_idx > 0:
-                    prev_path = output_folder / f"frame_{global_frame_idx - 1:04d}.png"
+                if is_overlap_frame:
+                    blend_target_idx = frames_before_this_segment - overlap + frame_i
+                    prev_path = output_folder / f"frame_{blend_target_idx:04d}.png"
                     if prev_path.exists():
                         prev_img = load_png_as_float(prev_path)
                         weight = blend_weights[frame_i]
                         img = blend_frames(prev_img, img, weight)
-
-                out_path = output_folder / f"frame_{global_frame_idx:04d}.png"
-                save_float_as_png(img, out_path)
-                output_paths.append(out_path)
-                global_frame_idx += 1
+                        out_path = output_folder / f"frame_{blend_target_idx:04d}.png"
+                        save_float_as_png(img, out_path)
+                else:
+                    out_path = output_folder / f"frame_{global_frame_idx:04d}.png"
+                    save_float_as_png(img, out_path)
+                    output_paths.append(out_path)
+                    global_frame_idx += 1
 
         print(f"Merged {len(output_paths)} frames to {output_folder}")
         return output_paths
 
-    def _merge_single_segment(self, segments_folder: Path, output_folder: Path) -> List[Path]:
+    def _merge_single_segment(
+        self, segments_folder: Path, output_folder: Path
+    ) -> List[Path]:
         """Merges a single segment (no blending needed).
 
         Args:
@@ -329,23 +342,51 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Merge aligned video segments")
     parser.add_argument(
-        "--segments-folder", "-i", default="workspace/temp_frames", help="Folder containing segment PNG directories"
-    )
-    parser.add_argument("--video-path", "-v", required=True, help="Path to input video (for mapping)")
-    parser.add_argument("--alignment-path", "-a", default="workspace/alignment.json", help="Path to alignment JSON")
-    parser.add_argument(
-        "--output-folder", "-o", default="workspace/merged_frames", help="Output folder for merged frames"
+        "--segments-folder",
+        "-i",
+        default="workspace/temp_frames",
+        help="Folder containing segment PNG directories",
     )
     parser.add_argument(
-        "--blend-mode", "-b", default="linear", choices=["linear", "sigmoid"], help="Blending mode for overlap regions"
+        "--video-path", "-v", required=True, help="Path to input video (for mapping)"
     )
-    parser.add_argument("--blend-sigma", type=float, default=6.0, help="Sigma parameter for sigmoid blending")
-    parser.add_argument("--window-size", type=int, default=110, help="Window size used for segmentation")
-    parser.add_argument("--overlap", type=int, default=25, help="Overlap between segments")
+    parser.add_argument(
+        "--alignment-path",
+        "-a",
+        default="workspace/alignment.json",
+        help="Path to alignment JSON",
+    )
+    parser.add_argument(
+        "--output-folder",
+        "-o",
+        default="workspace/merged_frames",
+        help="Output folder for merged frames",
+    )
+    parser.add_argument(
+        "--blend-mode",
+        "-b",
+        default="linear",
+        choices=["linear", "sigmoid"],
+        help="Blending mode for overlap regions",
+    )
+    parser.add_argument(
+        "--blend-sigma",
+        type=float,
+        default=6.0,
+        help="Sigma parameter for sigmoid blending",
+    )
+    parser.add_argument(
+        "--window-size", type=int, default=110, help="Window size used for segmentation"
+    )
+    parser.add_argument(
+        "--overlap", type=int, default=25, help="Overlap between segments"
+    )
 
     args = parser.parse_args()
 
-    mapping = create_segment_mapping(args.video_path, window_size=args.window_size, overlap=args.overlap)
+    mapping = create_segment_mapping(
+        args.video_path, window_size=args.window_size, overlap=args.overlap
+    )
 
     merge_segments(
         segments_folder=args.segments_folder,

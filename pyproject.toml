@@ -15,7 +15,6 @@ dependencies = [
     "fire>=0.7.1",
     "imageio-ffmpeg>=0.6.0",
     "scipy",
-    "opencv-python",
     "timm",
     "einops",
     "omegaconf",
@@ -23,7 +22,7 @@ dependencies = [
     "tqdm>=4.67.3",
     "huggingface-hub>=1.4.1",
     "kornia>=0.8.2",
-    "opencv-contrib-python>=4.11.0.86",
+    "opencv-contrib-python==4.11.0.86",
     "ipykernel>=7.2.0",
     "imageio[ffmpeg]>=2.37.2",
 ]

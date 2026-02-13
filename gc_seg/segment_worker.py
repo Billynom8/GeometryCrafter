@@ -66,7 +66,7 @@ class SegmentWorkerConfig:
     model_type: str = "diff"
     num_inference_steps: int = 5
     guidance_scale: float = 1.0
-    decode_chunk_size: int = 8
+    decode_chunk_size: int = 4
     force_projection: bool = True
     force_fixed_focal: bool = True
     downsample_ratio: float = 1.0

@@ -42,4 +42,17 @@ __all__ = [
     "PostProcessorConfig",
     "Encoder",
     "process_video",
+    # Encoder shortcuts
+    "NVENC_H264",
+    "NVENC_HEVC",
+    "X265",
+    "H264",
+    "VP9",
 ]
+
+# Encoder shortcuts for convenience
+NVENC_H264 = Encoder.NVENC_H264
+NVENC_HEVC = Encoder.NVENC_HEVC
+X265 = Encoder.X265
+H264 = Encoder.H264
+VP9 = Encoder.VP9

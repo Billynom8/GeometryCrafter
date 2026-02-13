@@ -43,6 +43,8 @@ class MergerConfig:
         output_folder: Path to save merged PNG sequence.
         blend_mode: Blending mode for overlap regions.
         blend_sigma: Sigma parameter for sigmoid blending.
+        bypass_alignment: If True, skip scale/shift alignment.
+        clean_output: If True, clean output folder before merging.
     """
 
     segments_folder: str
@@ -51,6 +53,8 @@ class MergerConfig:
     output_folder: str
     blend_mode: BlendMode = BlendMode.LINEAR
     blend_sigma: float = 6.0
+    bypass_alignment: bool = False
+    clean_output: bool = True
 
 
 def load_png_as_float(path: Path) -> np.ndarray:
@@ -67,7 +71,10 @@ def load_png_as_float(path: Path) -> np.ndarray:
         arr = np.array(img, dtype=np.uint16)
     else:
         arr = np.array(img, dtype=np.uint8)
-    return arr.astype(np.float32) / 65535.0
+    arr = arr.astype(np.float32) / 65535.0
+    if arr.ndim == 3:
+        arr = arr[..., 0]
+    return arr
 
 
 def save_float_as_png(arr: np.ndarray, path: Path) -> None:
@@ -77,6 +84,8 @@ def save_float_as_png(arr: np.ndarray, path: Path) -> None:
         arr: Float array with values in [0, 1].
         path: Path to save the PNG file.
     """
+    if arr.ndim == 3 and arr.shape[2] == 1:
+        arr = arr[..., 0]
     uint16 = (np.clip(arr, 0, 1) * 65535).astype(np.uint16)
     Image.fromarray(uint16).save(path, bits=16)
 
@@ -117,22 +126,18 @@ def create_blend_weights(num_overlap: int, blend_mode: BlendMode, sigma: float =
     return weights
 
 
-def blend_frames(frame_a: np.ndarray, frame_b: np.ndarray, weights: np.ndarray) -> np.ndarray:
-    """Blends two frames using pre-computed weights.
+def blend_frames(frame_a: np.ndarray, frame_b: np.ndarray, weight: float) -> np.ndarray:
+    """Blends two frames using a weight.
 
     Args:
         frame_a: Reference frame (first segment).
         frame_b: Aligned frame (second segment).
-        weights: Blending weights for frame_b.
+        weight: Blending weight for frame_b (0 = full frame_a, 1 = full frame_b).
 
     Returns:
         Blended frame.
     """
-    if weights.ndim == 1:
-        weights = weights[:, None, None]
-
-    blended = frame_a * (1 - weights) + frame_b * weights
-    return blended
+    return frame_a * (1 - weight) + frame_b * weight
 
 
 class Merger:
@@ -200,6 +205,14 @@ class Merger:
         """
         segments_folder = Path(self.config.segments_folder)
         output_folder = Path(self.config.output_folder)
+
+        # Clean output folder if requested
+        if self.config.clean_output and output_folder.exists():
+            import shutil
+
+            for f in output_folder.glob("*.png"):
+                f.unlink()
+
         output_folder.mkdir(parents=True, exist_ok=True)
 
         segments = self.config.segment_mapping.segments
@@ -209,8 +222,8 @@ class Merger:
         if len(segments) == 1:
             return self._merge_single_segment(segments_folder, output_folder)
 
-        output_paths = []
-        global_frame_idx = 0
+        output_paths_dict = {}  # Use dict to avoid duplicates from overlapping writes
+        prev_segment_output_end = 0  # Where the next frame would go after previous segment
 
         for seg_idx in range(len(segments)):
             seg_dir = segments_folder / f"part_{seg_idx:04d}"
@@ -227,26 +240,43 @@ class Merger:
 
                 img = load_png_as_float(frame_path)
 
-                if seg_idx > 0:
+                if seg_idx > 0 and not self.config.bypass_alignment:
                     align = self._get_alignment_for_pair(seg_idx - 1, seg_idx)
                     if align:
                         img = apply_scale_shift(img, align["scale"], align["shift"])
 
                 is_overlap_frame = seg_idx > 0 and frame_i < overlap
 
-                if is_overlap_frame and global_frame_idx > 0:
-                    prev_idx = global_frame_idx - 1
-                    prev_path = output_folder / f"frame_{prev_idx:04d}.png"
-                    if prev_path.exists():
-                        prev_img = load_png_as_float(prev_path)
+                if is_overlap_frame:
+                    # Overlap frames replace the last N frames of previous segment
+                    out_idx = prev_segment_output_end - overlap + frame_i
+                else:
+                    # Non-overlap frames continue from where previous segment ended
+                    out_idx = prev_segment_output_end + (frame_i - overlap if seg_idx > 0 else frame_i)
+
+                out_path = output_folder / f"frame_{out_idx:04d}.png"
+
+                if is_overlap_frame and out_idx >= 0:
+                    # Load the frame we're about to overwrite (from previous segment)
+                    existing_path = output_folder / f"frame_{out_idx:04d}.png"
+                    if existing_path.exists():
+                        existing_img = load_png_as_float(existing_path)
                         weight = blend_weights[frame_i]
-                        img = blend_frames(prev_img, img, np.array([weight]))
+                        img = blend_frames(existing_img, img, weight)
 
-                out_path = output_folder / f"frame_{global_frame_idx:04d}.png"
                 save_float_as_png(img, out_path)
-                output_paths.append(out_path)
-                global_frame_idx += 1
+                # Use dict to overwrite any previous entry for this index
+                output_paths_dict[out_idx] = out_path
 
+            # Update: after this segment, where would the next frame go?
+            # It's the current end plus any new (non-overlap) frames from this segment
+            if seg_idx == 0:
+                prev_segment_output_end = num_frames
+            else:
+                prev_segment_output_end += num_frames - overlap
+
+        # Sort by frame index and return paths
+        output_paths = [output_paths_dict[i] for i in sorted(output_paths_dict.keys())]
         print(f"Merged {len(output_paths)} frames to {output_folder}")
         return output_paths
 
@@ -284,6 +314,8 @@ def merge_segments(
     output_folder: str,
     blend_mode: str = "linear",
     blend_sigma: float = 6.0,
+    bypass_alignment: bool = False,
+    clean_output: bool = True,
 ) -> List[Path]:
     """High-level function to merge aligned segments.
 
@@ -296,6 +328,8 @@ def merge_segments(
         output_folder: Path to save merged PNG sequence.
         blend_mode: Blending mode - 'linear' or 'sigmoid' (default: 'linear').
         blend_sigma: Sigma parameter for sigmoid blending (default: 6.0).
+        bypass_alignment: If True, skip scale/shift alignment.
+        clean_output: If True, clean output folder before merging.
 
     Returns:
         List of paths to the merged PNG files.
@@ -318,6 +352,8 @@ def merge_segments(
         output_folder=output_folder,
         blend_mode=BlendMode(blend_mode),
         blend_sigma=blend_sigma,
+        bypass_alignment=bypass_alignment,
+        clean_output=clean_output,
     )
     merger = Merger(config)
     return merger.merge()

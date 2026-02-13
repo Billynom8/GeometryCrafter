@@ -52,6 +52,7 @@ class SegmentWorkerConfig:
         force_projection: Enforce perspective projection constraints.
         force_fixed_focal: Assume constant camera focal length.
         downsample_ratio: Input downsample factor (default 1.0).
+        keep_low_res: If True, save output at target resolution without upscaling.
         seed: Random seed for reproducibility (default 42).
         low_memory_usage: Enable memory-efficient processing.
         track_time: Print timing information.
@@ -69,7 +70,8 @@ class SegmentWorkerConfig:
     decode_chunk_size: int = 4
     force_projection: bool = True
     force_fixed_focal: bool = True
-    downsample_ratio: float = 1.0
+    downsample_ratio: float = 1.0  # Set to None to auto-calculate from height/width
+    keep_low_res: bool = True  # If True, keep output at target resolution (no upscale)
     seed: int = 42
     low_memory_usage: bool = True
     track_time: bool = True
@@ -189,27 +191,45 @@ class SegmentWorker:
         cfg = self.config
         vid = VideoReader(cfg.video_path, ctx=cpu(0))
 
-        if cfg.height is None or cfg.width is None:
-            cfg.height = vid[0].shape[0]
-            cfg.width = vid[0].shape[1]
+        # Get original video dimensions
+        original_height = vid[0].shape[0]
+        original_width = vid[0].shape[1]
 
-        assert cfg.height % 64 == 0
-        assert cfg.width % 64 == 0
+        # Auto-calculate downsample ratio if not explicitly set
+        if cfg.downsample_ratio is None or cfg.downsample_ratio <= 1.0:
+            if cfg.height is not None and cfg.width is not None:
+                # Calculate ratio to get from original to target
+                ratio_h = original_height / cfg.height
+                ratio_w = original_width / cfg.width
+                # Use the larger ratio to ensure both dimensions fit
+                cfg.downsample_ratio = max(ratio_h, ratio_w)
+                if cfg.downsample_ratio > 1.0:
+                    print(
+                        f"Auto-calculated downsample_ratio: {cfg.downsample_ratio:.2f} "
+                        f"(from {original_width}x{original_height} to target {cfg.width}x{cfg.height})"
+                    )
+            else:
+                cfg.downsample_ratio = 1.0
+
+        if cfg.height is None or cfg.width is None:
+            cfg.height = original_height
+            cfg.width = original_width
+
+        assert cfg.height % 64 == 0, f"Height {cfg.height} must be divisible by 64"
+        assert cfg.width % 64 == 0, f"Width {cfg.width} must be divisible by 64"
 
         frames_idx = list(range(start_frame, end_frame + 1))
         frames = vid.get_batch(frames_idx).asnumpy().astype(np.float32) / 255.0
         frames_tensor = torch.tensor(frames, device="cuda").float().permute(0, 3, 1, 2)
 
         if cfg.downsample_ratio > 1.0:
-            frames_tensor = F.interpolate(
-                frames_tensor,
-                (
-                    round(frames_tensor.shape[-2] / cfg.downsample_ratio),
-                    round(frames_tensor.shape[-1] / cfg.downsample_ratio),
-                ),
-                mode="bicubic",
-                antialias=True,
-            ).clamp(0, 1)
+            # Calculate new dimensions and ensure they're even
+            new_h = int(frames_tensor.shape[-2] / cfg.downsample_ratio)
+            new_w = int(frames_tensor.shape[-1] / cfg.downsample_ratio)
+            # Make dimensions even (required by intrinsic map calculation)
+            new_h = new_h - (new_h % 2)
+            new_w = new_w - (new_w % 2)
+            frames_tensor = F.interpolate(frames_tensor, (new_h, new_w), mode="bicubic", antialias=True).clamp(0, 1)
 
         return frames_tensor
 
@@ -257,7 +277,8 @@ class SegmentWorker:
                 low_memory_usage=cfg.low_memory_usage,
             )
 
-        if cfg.downsample_ratio > 1.0:
+        # Only upscale back to original resolution if explicitly disabled
+        if cfg.downsample_ratio > 1.0 and not cfg.keep_low_res:
             orig_h = frames_tensor.shape[-2] * cfg.downsample_ratio
             orig_w = frames_tensor.shape[-1] * cfg.downsample_ratio
             point_map = F.interpolate(
@@ -332,6 +353,8 @@ def process_video_segments(
     decode_chunk_size: int = 8,
     seed: int = 42,
     low_memory_usage: bool = False,
+    keep_low_res: bool = True,
+    downsample_ratio: Optional[float] = None,
 ) -> List[Path]:
     """High-level function to process video segments.
 
@@ -350,6 +373,8 @@ def process_video_segments(
         decode_chunk_size: Frames processed at once by VAE.
         seed: Random seed for reproducibility.
         low_memory_usage: Enable memory-efficient processing.
+        keep_low_res: If True, save output at target resolution without upscaling.
+        downsample_ratio: Input downsample factor. If None, auto-calculated from height/width.
 
     Returns:
         List of paths to the saved NPZ files.
@@ -378,6 +403,8 @@ def process_video_segments(
         decode_chunk_size=decode_chunk_size,
         seed=seed,
         low_memory_usage=low_memory_usage,
+        keep_low_res=keep_low_res,
+        downsample_ratio=downsample_ratio if downsample_ratio is not None else 1.0,
     )
 
     worker = SegmentWorker(config)

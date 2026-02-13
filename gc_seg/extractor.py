@@ -64,7 +64,9 @@ def load_npz_segment(path: Path) -> Tuple[np.ndarray, np.ndarray, dict]:
     return point_map, mask, metadata
 
 
-def extract_depth_from_point_map(point_map: np.ndarray, mask: np.ndarray, normalize: bool = True) -> np.ndarray:
+def extract_depth_from_point_map(
+    point_map: np.ndarray, mask: np.ndarray, normalize: bool = True, invert: bool = False
+) -> np.ndarray:
     """Extracts depth from a point map.
 
     Extracts the Z-channel from a point map and optionally normalizes it
@@ -74,20 +76,24 @@ def extract_depth_from_point_map(point_map: np.ndarray, mask: np.ndarray, normal
         point_map: Array of shape [H, W, 3] with X, Y, Z channels.
         mask: Boolean array of shape [H, W] indicating valid pixels.
         normalize: Whether to normalize to [0, 1] range.
+        invert: Whether to invert depth (for disparity vs depth conversion).
 
     Returns:
         Depth array of shape [H, W] with values in [0, 1] if normalized,
         or original scale otherwise.
     """
     z_channel = point_map[..., 2]
-    z_depth = np.where(mask, z_channel, 0.0)
+    z_depth = np.where(mask, z_channel, np.nan)
     if normalize:
-        valid = z_depth[mask]
+        valid = z_depth[~np.isnan(z_depth)]
         if len(valid) > 0:
             vmin, vmax = np.percentile(valid, (1, 99))
             if vmax > vmin:
                 z_depth = np.clip(z_depth, vmin, vmax)
                 z_depth = (z_depth - vmin) / (vmax - vmin)
+    if invert:
+        z_depth = 1.0 - z_depth
+    z_depth = np.nan_to_num(z_depth, nan=0.0)
     return z_depth.astype(np.float32)
 
 
@@ -168,8 +174,10 @@ class Extractor:
 
         num_frames = metadata["frame_count"]
         for i in range(num_frames):
-            depth = extract_depth_from_point_map(point_map[i], mask[i], normalize=self.config.normalize)
-            uint16 = depth_to_uint16(depth, invert=self.config.invert)
+            depth = extract_depth_from_point_map(
+                point_map[i], mask[i], normalize=self.config.normalize, invert=self.config.invert
+            )
+            uint16 = depth_to_uint16(depth, invert=False)
             frame_filename = f"frame_{i:04d}.png"
             frame_path = output_dir / frame_filename
             Image.fromarray(uint16).save(frame_path, bits=16)

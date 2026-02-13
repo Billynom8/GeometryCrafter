@@ -71,8 +71,8 @@ class SegmentWorkerConfig:
     force_fixed_focal: bool = True
     downsample_ratio: float = 1.0
     seed: int = 42
-    low_memory_usage: bool = False
-    track_time: bool = False
+    low_memory_usage: bool = True
+    track_time: bool = True
 
 
 class SegmentWorker:

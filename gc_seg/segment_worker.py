@@ -13,6 +13,7 @@ Example:
     ... )
 """
 
+import gc
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -322,6 +323,8 @@ class SegmentWorker:
         for i in range(len(mapping.segments)):
             path = self.process_segment(i)
             output_paths.append(path)
+            torch.cuda.empty_cache()
+            gc.collect()
 
         print(f"Processed {len(output_paths)} segments")
         return output_paths
@@ -335,8 +338,6 @@ class SegmentWorker:
         if self.pipe is not None:
             del self.pipe
         torch.cuda.empty_cache()
-        import gc
-
         gc.collect()
 
 

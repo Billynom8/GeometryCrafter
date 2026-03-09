@@ -57,6 +57,7 @@ class SegmentWorkerConfig:
         seed: Random seed for reproducibility (default 42).
         low_memory_usage: Enable memory-efficient processing.
         cpu_offload: If True, offload models to CPU when not in use (reduces VRAM but slower).
+        cpu_offload_threshold: Enable cpu_offload automatically if segment has more frames than this value.
         track_time: Print timing information.
     """
 
@@ -77,6 +78,7 @@ class SegmentWorkerConfig:
     seed: int = 42
     low_memory_usage: bool = True
     cpu_offload: bool = False
+    cpu_offload_threshold: int = 0  # Auto-enable cpu_offload if segment has more frames than this
     track_time: bool = True
 
 
@@ -320,10 +322,23 @@ class SegmentWorker:
         Returns:
             List of paths to the saved NPZ files.
         """
+        cfg = self.config
+        mapping = cfg.segment_mapping
+
+        max_frames = max(seg.frame_count for seg in mapping.segments)
+        should_cpu_offload = cfg.cpu_offload or (
+            cfg.cpu_offload_threshold > 0 and max_frames > cfg.cpu_offload_threshold
+        )
+
+        if should_cpu_offload and not cfg.cpu_offload:
+            print(
+                f"Auto-enabling CPU offload (segment has {max_frames} frames, threshold is {cfg.cpu_offload_threshold})"
+            )
+            cfg.cpu_offload = True
+
         if self.pipe is None:
             self._load_models()
 
-        mapping = self.config.segment_mapping
         output_paths = []
 
         for i in range(len(mapping.segments)):
@@ -361,6 +376,7 @@ def process_video_segments(
     seed: int = 42,
     low_memory_usage: bool = False,
     cpu_offload: bool = False,
+    cpu_offload_threshold: int = 0,
     keep_low_res: bool = True,
     downsample_ratio: Optional[float] = None,
 ) -> List[Path]:
@@ -382,6 +398,7 @@ def process_video_segments(
         seed: Random seed for reproducibility.
         low_memory_usage: Enable memory-efficient processing.
         cpu_offload: If True, offload models to CPU when not in use (reduces VRAM but slower).
+        cpu_offload_threshold: Enable cpu_offload automatically if segment has more frames than this value.
         keep_low_res: If True, save output at target resolution without upscaling.
         downsample_ratio: Input downsample factor. If None, auto-calculated from height/width.
 
@@ -413,6 +430,7 @@ def process_video_segments(
         seed=seed,
         low_memory_usage=low_memory_usage,
         cpu_offload=cpu_offload,
+        cpu_offload_threshold=cpu_offload_threshold,
         keep_low_res=keep_low_res,
         downsample_ratio=downsample_ratio if downsample_ratio is not None else 1.0,
     )
@@ -440,6 +458,12 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--low-memory-usage", action="store_true")
     parser.add_argument("--cpu-offload", action="store_true", help="Offload models to CPU to save VRAM")
+    parser.add_argument(
+        "--cpu-offload-threshold",
+        type=int,
+        default=0,
+        help="Auto-enable cpu_offload if segment has more frames than this",
+    )
     parser.add_argument("--track-time", action="store_true")
 
     args = parser.parse_args()
@@ -459,6 +483,7 @@ if __name__ == "__main__":
         seed=args.seed,
         low_memory_usage=args.low_memory_usage,
         cpu_offload=args.cpu_offload,
+        cpu_offload_threshold=args.cpu_offload_threshold,
     )
 
     worker = SegmentWorker(config)

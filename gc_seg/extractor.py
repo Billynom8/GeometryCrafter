@@ -112,6 +112,7 @@ def extract_depth_from_point_map(
         z_depth = np.where(mask, z_channel, background_value)
     if invert:
         z_depth = 1.0 - z_depth
+    z_depth = np.where(mask, z_depth, background_value)
     return z_depth.astype(np.float32)
 
 

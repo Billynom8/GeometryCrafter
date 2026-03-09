@@ -31,6 +31,7 @@ class ExtractorConfig:
         file_ext: Extension for NPZ files (default: '.npz').
         normalize: Whether to normalize depth values (default: True).
         invert: Whether to invert depth values (default: False).
+        background_value: Value for invalid pixels (default: 0.0).
     """
 
     segments_folder: str
@@ -39,6 +40,7 @@ class ExtractorConfig:
     file_ext: str = ".npz"
     normalize: bool = True
     invert: bool = False
+    background_value: float = 0.0
 
 
 def load_npz_segment(path: Path) -> Tuple[np.ndarray, np.ndarray, dict]:
@@ -65,7 +67,7 @@ def load_npz_segment(path: Path) -> Tuple[np.ndarray, np.ndarray, dict]:
 
 
 def extract_depth_from_point_map(
-    point_map: np.ndarray, mask: np.ndarray, normalize: bool = True, invert: bool = False
+    point_map: np.ndarray, mask: np.ndarray, normalize: bool = True, invert: bool = False, background_value: float = 0.0
 ) -> np.ndarray:
     """Extracts depth from a point map.
 
@@ -77,6 +79,7 @@ def extract_depth_from_point_map(
         mask: Boolean array of shape [H, W] indicating valid pixels.
         normalize: Whether to normalize to [0, 1] range.
         invert: Whether to invert depth (for disparity vs depth conversion).
+        background_value: Value to use for invalid pixels (default 0.0).
 
     Returns:
         Depth array of shape [H, W] with values in [0, 1] if normalized,
@@ -93,7 +96,7 @@ def extract_depth_from_point_map(
                 z_depth = (z_depth - vmin) / (vmax - vmin)
     if invert:
         z_depth = 1.0 - z_depth
-    z_depth = np.nan_to_num(z_depth, nan=0.0)
+    z_depth = np.nan_to_num(z_depth, nan=background_value)
     return z_depth.astype(np.float32)
 
 
@@ -175,7 +178,11 @@ class Extractor:
         num_frames = metadata["frame_count"]
         for i in range(num_frames):
             depth = extract_depth_from_point_map(
-                point_map[i], mask[i], normalize=self.config.normalize, invert=self.config.invert
+                point_map[i],
+                mask[i],
+                normalize=self.config.normalize,
+                invert=self.config.invert,
+                background_value=self.config.background_value,
             )
             uint16 = depth_to_uint16(depth, invert=False)
             frame_filename = f"frame_{i:04d}.png"
@@ -203,7 +210,11 @@ class Extractor:
 
 
 def extract_disparity_frames(
-    segments_folder: str, output_folder: str, normalize: bool = True, invert: bool = False
+    segments_folder: str,
+    output_folder: str,
+    normalize: bool = True,
+    invert: bool = False,
+    background_value: float = 0.0,
 ) -> List[Path]:
     """High-level function to extract disparity frames from all segments.
 
@@ -214,6 +225,7 @@ def extract_disparity_frames(
         output_folder: Directory to save PNG frames.
         normalize: Whether to normalize depth values (default: True).
         invert: Whether to invert depth values (default: False).
+        background_value: Value for invalid pixels (default: 0.0).
 
     Returns:
         List of paths to output directories.
@@ -226,14 +238,23 @@ def extract_disparity_frames(
         ... )
     """
     config = ExtractorConfig(
-        segments_folder=segments_folder, output_folder=output_folder, normalize=normalize, invert=invert
+        segments_folder=segments_folder,
+        output_folder=output_folder,
+        normalize=normalize,
+        invert=invert,
+        background_value=background_value,
     )
     extractor = Extractor(config)
     return extractor.extract_all_segments()
 
 
 def extract_single_segment(
-    segment_index: int, segments_folder: str, output_folder: str, normalize: bool = True, invert: bool = False
+    segment_index: int,
+    segments_folder: str,
+    output_folder: str,
+    normalize: bool = True,
+    invert: bool = False,
+    background_value: float = 0.0,
 ) -> Path:
     """Extracts frames from a single segment.
 
@@ -243,12 +264,17 @@ def extract_single_segment(
         output_folder: Directory to save PNG frames.
         normalize: Whether to normalize depth values.
         invert: Whether to invert depth values.
+        background_value: Value for invalid pixels (default: 0.0).
 
     Returns:
         Path to the output directory containing PNG frames.
     """
     config = ExtractorConfig(
-        segments_folder=segments_folder, output_folder=output_folder, normalize=normalize, invert=invert
+        segments_folder=segments_folder,
+        output_folder=output_folder,
+        normalize=normalize,
+        invert=invert,
+        background_value=background_value,
     )
     extractor = Extractor(config)
     return extractor.extract_segment(segment_index)

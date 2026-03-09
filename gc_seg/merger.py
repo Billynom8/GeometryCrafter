@@ -127,7 +127,10 @@ def create_blend_weights(num_overlap: int, blend_mode: BlendMode, sigma: float =
 
 
 def blend_frames(frame_a: np.ndarray, frame_b: np.ndarray, weight: float) -> np.ndarray:
-    """Blends two frames using a weight.
+    """Blends two frames using a weight, preserving background.
+
+    Only blends pixels where at least one frame has non-zero depth.
+    Background pixels (0) are preserved as 0.
 
     Args:
         frame_a: Reference frame (first segment).
@@ -137,7 +140,14 @@ def blend_frames(frame_a: np.ndarray, frame_b: np.ndarray, weight: float) -> np.
     Returns:
         Blended frame.
     """
-    return frame_a * (1 - weight) + frame_b * weight
+    valid_a = frame_a > 0
+    valid_b = frame_b > 0
+    valid_blend = valid_a | valid_b
+
+    blended = frame_a * (1 - weight) + frame_b * weight
+
+    result = np.where(valid_blend, blended, 0.0)
+    return result
 
 
 class Merger:

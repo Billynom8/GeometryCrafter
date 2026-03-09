@@ -87,11 +87,17 @@ def load_16bit_png(path: Path) -> np.ndarray:
 
 
 def apply_joint_bilateral_filter(
-    disparity: np.ndarray, reference: np.ndarray, d: int = 9, sigma_color: float = 0.1, sigma_space: float = 0.1
+    disparity: np.ndarray,
+    reference: np.ndarray,
+    d: int = 9,
+    sigma_color: float = 0.1,
+    sigma_space: float = 0.1,
+    mask: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Applies joint bilateral filter to disparity map.
 
     Uses the reference image to guide the filtering, preserving edges.
+    Optionally preserves background values using a mask.
 
     Args:
         disparity: Disparity/depth map (0-1 range).
@@ -99,10 +105,13 @@ def apply_joint_bilateral_filter(
         d: Diameter of pixel neighborhood.
         sigma_color: Filter sigma in color space.
         sigma_space: Filter sigma in coordinate space.
+        mask: Optional boolean mask where True = valid depth, False = background.
 
     Returns:
         Filtered disparity map.
     """
+    original_background = np.where(mask == False, disparity, np.nan) if mask is not None else None
+
     disp_u16 = (disparity * 65535).astype(np.uint16)
     ref_u8 = (reference * 255).astype(np.uint8)
 
@@ -114,6 +123,9 @@ def apply_joint_bilateral_filter(
         disp_f32 = (disparity * 65535).astype(np.float32)
         filtered = cv2.bilateralFilter(disp_f32, d, sigma_color * 255, sigma_space * 255)
         filtered = filtered.astype(np.float32) / 65535.0
+
+    if mask is not None:
+        filtered = np.where(mask, filtered, 0.0)
 
     return filtered
 

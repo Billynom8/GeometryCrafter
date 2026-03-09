@@ -74,6 +74,7 @@ def load_png_as_float(path: Path) -> np.ndarray:
     arr = arr.astype(np.float32) / 65535.0
     if arr.ndim == 3:
         arr = arr[..., 0]
+    arr = np.where(arr < 0.001, 0.0, arr)
     return arr
 
 

@@ -86,17 +86,19 @@ def extract_depth_from_point_map(
         or original scale otherwise.
     """
     z_channel = point_map[..., 2]
-    z_depth = np.where(mask, z_channel, np.nan)
     if normalize:
+        z_depth = np.where(mask, z_channel, np.nan)
         valid = z_depth[~np.isnan(z_depth)]
         if len(valid) > 0:
             vmin, vmax = np.percentile(valid, (1, 99))
             if vmax > vmin:
                 z_depth = np.clip(z_depth, vmin, vmax)
                 z_depth = (z_depth - vmin) / (vmax - vmin)
+        z_depth = np.nan_to_num(z_depth, nan=background_value)
+    else:
+        z_depth = np.where(mask, z_channel, background_value)
     if invert:
         z_depth = 1.0 - z_depth
-    z_depth = np.nan_to_num(z_depth, nan=background_value)
     return z_depth.astype(np.float32)
 
 

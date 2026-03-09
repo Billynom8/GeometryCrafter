@@ -56,6 +56,7 @@ class SegmentWorkerConfig:
         keep_low_res: If True, save output at target resolution without upscaling.
         seed: Random seed for reproducibility (default 42).
         low_memory_usage: Enable memory-efficient processing.
+        cpu_offload: If True, offload models to CPU when not in use (reduces VRAM but slower).
         track_time: Print timing information.
     """
 
@@ -75,6 +76,7 @@ class SegmentWorkerConfig:
     keep_low_res: bool = True  # If True, keep output at target resolution (no upscale)
     seed: int = 42
     low_memory_usage: bool = True
+    cpu_offload: bool = False
     track_time: bool = True
 
 
@@ -172,6 +174,10 @@ class SegmentWorker:
         except Exception as e:
             print(f"Xformers not enabled: {e}")
         self.pipe.enable_attention_slicing()
+
+        if cfg.cpu_offload:
+            print("Enabling CPU offload...")
+            self.pipe.enable_model_cpu_offload()
 
     def _prepare_video_frames(self, start_frame: int, end_frame: int) -> torch.Tensor:
         """Prepares video frames for inference.
@@ -354,6 +360,7 @@ def process_video_segments(
     decode_chunk_size: int = 8,
     seed: int = 42,
     low_memory_usage: bool = False,
+    cpu_offload: bool = False,
     keep_low_res: bool = True,
     downsample_ratio: Optional[float] = None,
 ) -> List[Path]:
@@ -374,6 +381,7 @@ def process_video_segments(
         decode_chunk_size: Frames processed at once by VAE.
         seed: Random seed for reproducibility.
         low_memory_usage: Enable memory-efficient processing.
+        cpu_offload: If True, offload models to CPU when not in use (reduces VRAM but slower).
         keep_low_res: If True, save output at target resolution without upscaling.
         downsample_ratio: Input downsample factor. If None, auto-calculated from height/width.
 
@@ -404,6 +412,7 @@ def process_video_segments(
         decode_chunk_size=decode_chunk_size,
         seed=seed,
         low_memory_usage=low_memory_usage,
+        cpu_offload=cpu_offload,
         keep_low_res=keep_low_res,
         downsample_ratio=downsample_ratio if downsample_ratio is not None else 1.0,
     )
@@ -430,6 +439,7 @@ if __name__ == "__main__":
     parser.add_argument("--decode-chunk-size", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--low-memory-usage", action="store_true")
+    parser.add_argument("--cpu-offload", action="store_true", help="Offload models to CPU to save VRAM")
     parser.add_argument("--track-time", action="store_true")
 
     args = parser.parse_args()
@@ -448,6 +458,7 @@ if __name__ == "__main__":
         decode_chunk_size=args.decode_chunk_size,
         seed=args.seed,
         low_memory_usage=args.low_memory_usage,
+        cpu_offload=args.cpu_offload,
     )
 
     worker = SegmentWorker(config)

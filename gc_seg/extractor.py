@@ -67,7 +67,13 @@ def load_npz_segment(path: Path) -> Tuple[np.ndarray, np.ndarray, dict]:
 
 
 def extract_depth_from_point_map(
-    point_map: np.ndarray, mask: np.ndarray, normalize: bool = True, invert: bool = False, background_value: float = 0.0
+    point_map: np.ndarray,
+    mask: np.ndarray,
+    normalize: bool = True,
+    invert: bool = False,
+    background_value: float = 0.0,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
 ) -> np.ndarray:
     """Extracts depth from a point map.
 
@@ -80,6 +86,8 @@ def extract_depth_from_point_map(
         normalize: Whether to normalize to [0, 1] range.
         invert: Whether to invert depth (for disparity vs depth conversion).
         background_value: Value to use for invalid pixels (default 0.0).
+        vmin: Optional global min for normalization (computed if None).
+        vmax: Optional global max for normalization (computed if None).
 
     Returns:
         Depth array of shape [H, W] with values in [0, 1] if normalized,
@@ -89,11 +97,16 @@ def extract_depth_from_point_map(
     if normalize:
         z_depth = np.where(mask, z_channel, np.nan)
         valid = z_depth[~np.isnan(z_depth)]
-        if len(valid) > 0:
-            vmin, vmax = np.percentile(valid, (1, 99))
-            if vmax > vmin:
-                z_depth = np.clip(z_depth, vmin, vmax)
-                z_depth = (z_depth - vmin) / (vmax - vmin)
+        if vmin is None or vmax is None:
+            if len(valid) > 0:
+                vmin_calc, vmax_calc = np.percentile(valid, (1, 99))
+                vmin = vmin_calc if vmin is None else vmin
+                vmax = vmax_calc if vmax is None else vmax
+        if vmax > vmin:
+            z_depth = np.clip(z_depth, vmin, vmax)
+            z_depth = (z_depth - vmin) / (vmax - vmin)
+        else:
+            z_depth = np.zeros_like(z_depth)
         z_depth = np.nan_to_num(z_depth, nan=background_value)
     else:
         z_depth = np.where(mask, z_channel, background_value)
@@ -178,6 +191,20 @@ class Extractor:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         num_frames = metadata["frame_count"]
+
+        all_z = []
+        for i in range(num_frames):
+            z = point_map[i, :, :, 2]
+            m = mask[i]
+            valid = m
+            if valid.any():
+                all_z.append(z[valid])
+        if all_z:
+            all_z = np.concatenate(all_z)
+            global_vmin, global_vmax = np.percentile(all_z, (1, 99))
+        else:
+            global_vmin, global_vmax = 0.0, 1.0
+
         for i in range(num_frames):
             depth = extract_depth_from_point_map(
                 point_map[i],
@@ -185,6 +212,8 @@ class Extractor:
                 normalize=self.config.normalize,
                 invert=self.config.invert,
                 background_value=self.config.background_value,
+                vmin=global_vmin,
+                vmax=global_vmax,
             )
             uint16 = depth_to_uint16(depth, invert=False)
             frame_filename = f"frame_{i:04d}.png"

@@ -107,13 +107,14 @@ class SegmentMapping:
         self.segments.append(segment)
         return segment
 
-    def auto_segment(self, window_size: int = 110, overlap: Optional[int] = None) -> List[Segment]:
+    def auto_segment(self, window_size: int = 110, overlap: Optional[int] = None, cpu_offload_threshold: int = 45) -> List[Segment]:
         """Automatically creates segments based on window size and overlap.
 
         Args:
             window_size: Number of frames per segment.
             overlap: Number of overlapping frames between segments.
                 If None, uses the instance default.
+            cpu_offload_threshold: Minimum target segment size for the final segments (default 45).
 
         Returns:
             List of created Segment objects.
@@ -135,19 +136,42 @@ class SegmentMapping:
         total_frames = self.metadata.num_frames
         stride = window_size - overlap
 
-        segment_num = 1
+        # First pass: calculate initial lengths
+        sizes = []
         start = 0
-
         while start < total_frames:
             end = min(start + window_size - 1, total_frames - 1)
-            segment_frames = end - start + 1
+            size = end - start + 1
 
-            if segment_num > 1 and segment_frames <= overlap:
+            if len(sizes) > 0 and size <= overlap:
                 break
 
-            self.add_segment(name=f"Segment_{segment_num:03d}", start_frame=start, end_frame=end)
+            sizes.append(size)
             start += stride
-            segment_num += 1
+
+        # Second pass: redistribute frames right-to-left to meet cpu_offload_threshold
+        if len(sizes) > 1:
+            min_size = overlap + 1
+            target = min(cpu_offload_threshold, window_size)
+            for i in range(len(sizes) - 1, 0, -1):
+                if sizes[i] < target:
+                    diff = target - sizes[i]
+                    # Try to steal `diff` from predecessors
+                    j = i - 1
+                    while diff > 0 and j >= 0:
+                        available = max(0, sizes[j] - min_size)
+                        steal = min(diff, available)
+                        sizes[j] -= steal
+                        sizes[i] += steal
+                        diff -= steal
+                        j -= 1
+
+        # Third pass: construct segments with adjusted sizes
+        current_start = 0
+        for i, size in enumerate(sizes, 1):
+            end = current_start + size - 1
+            self.add_segment(name=f"Segment_{i:03d}", start_frame=current_start, end_frame=end)
+            current_start += size - overlap
 
         return self.segments
 
@@ -326,7 +350,7 @@ def probe_video_metadata(video_path: str) -> VideoMetadata:
 
 
 def create_segment_mapping(
-    video_path: str, window_size: int = 110, overlap: int = 25, use_exact_timebase: bool = True
+    video_path: str, window_size: int = 110, overlap: int = 25, use_exact_timebase: bool = True, cpu_offload_threshold: int = 45
 ) -> SegmentMapping:
     """Creates a complete segment mapping for a video.
 
@@ -337,6 +361,7 @@ def create_segment_mapping(
         window_size: Number of frames per segment (default 110).
         overlap: Number of overlapping frames between segments (default 25).
         use_exact_timebase: If True, use ffprobe to get exact time base.
+        cpu_offload_threshold: Minimum target segment size (default 45).
 
     Returns:
         A SegmentMapping object with auto-generated segments.
@@ -358,7 +383,7 @@ def create_segment_mapping(
 
     mapping = SegmentMapping(video_path=video_path, metadata=metadata, overlap=overlap)
 
-    mapping.auto_segment(window_size=window_size, overlap=overlap)
+    mapping.auto_segment(window_size=window_size, overlap=overlap, cpu_offload_threshold=cpu_offload_threshold)
 
     return mapping
 
@@ -370,10 +395,16 @@ if __name__ == "__main__":
     parser.add_argument("video_path", help="Path to input video")
     parser.add_argument("--window-size", type=int, default=110, help="Frames per segment")
     parser.add_argument("--overlap", type=int, default=25, help="Overlap between segments")
+    parser.add_argument("--cpu-offload-threshold", type=int, default=45, help="Target minimum segment size for final segments")
     parser.add_argument("--output", "-o", help="Output JSON path")
 
     args = parser.parse_args()
 
-    mapping = create_segment_mapping(args.video_path, window_size=args.window_size, overlap=args.overlap)
+    mapping = create_segment_mapping(
+        args.video_path, 
+        window_size=args.window_size, 
+        overlap=args.overlap,
+        cpu_offload_threshold=args.cpu_offload_threshold
+    )
 
     print(mapping.to_json(args.output))

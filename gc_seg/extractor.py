@@ -33,6 +33,7 @@ class ExtractorConfig:
         invert: Whether to invert depth values (default: False).
         background_value: Value for invalid pixels (default: 0.0).
         smooth_mask_edges: If > 0, apply Gaussian blur to smooth mask edges (in pixels).
+        mask_dilation: If > 0, dilate mask. If < 0, erode mask.
     """
 
     segments_folder: str
@@ -43,6 +44,7 @@ class ExtractorConfig:
     invert: bool = False
     background_value: float = 0.0
     smooth_mask_edges: float = 0.0
+    mask_dilation: int = 0  # Can be negative to erode
 
 
 def load_npz_segment(path: Path) -> Tuple[np.ndarray, np.ndarray, dict]:
@@ -68,25 +70,39 @@ def load_npz_segment(path: Path) -> Tuple[np.ndarray, np.ndarray, dict]:
     return point_map, mask, metadata
 
 
-def smooth_mask(mask: np.ndarray, sigma: float) -> np.ndarray:
+def smooth_mask(mask: np.ndarray, sigma: float, dilation: int = 0) -> np.ndarray:
     """Applies Gaussian blur to mask edges for smooth transition.
 
     Args:
         mask: Boolean mask array.
         sigma: Blur radius in pixels.
+        dilation: If > 0, dilate mask. If < 0, erode mask. If 0, no change.
 
     Returns:
         Float array [0, 1] with smooth edges.
     """
-    if sigma <= 0:
+    if sigma == 0 and dilation == 0:
         return mask.astype(np.float32)
+
+    mask_bool = mask.astype(bool)
+
+    if dilation != 0:
+        try:
+            from scipy.ndimage import binary_dilation, binary_erosion
+
+            if dilation > 0:
+                mask_bool = binary_dilation(mask_bool, iterations=dilation)
+            else:
+                mask_bool = binary_erosion(mask_bool, iterations=-dilation)
+        except ImportError:
+            pass
 
     try:
         from scipy.ndimage import gaussian_filter
     except ImportError:
-        return mask.astype(np.float32)
+        return mask_bool.astype(np.float32)
 
-    mask_float = mask.astype(np.float32)
+    mask_float = mask_bool.astype(np.float32)
     smoothed = gaussian_filter(mask_float, sigma=sigma)
     return smoothed
 
@@ -100,6 +116,7 @@ def extract_depth_from_point_map(
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
     smooth_mask_edges: float = 0.0,
+    mask_dilation: int = 0,  # Can be negative to erode,
 ) -> np.ndarray:
     """Extracts depth from a point map.
 
@@ -115,14 +132,15 @@ def extract_depth_from_point_map(
         vmin: Optional global min for normalization (computed if None).
         vmax: Optional global max for normalization (computed if None).
         smooth_mask_edges: If > 0, apply Gaussian blur to smooth mask edges.
+        mask_dilation: If > 0, dilate mask. If < 0, erode mask.
 
     Returns:
         Depth array of shape [H, W] with values in [0, 1] if normalized,
         or original scale otherwise.
     """
     # Apply mask smoothing if requested
-    if smooth_mask_edges > 0:
-        mask_alpha = smooth_mask(mask, smooth_mask_edges)
+    if smooth_mask_edges > 0 or mask_dilation > 0:
+        mask_alpha = smooth_mask(mask, smooth_mask_edges, mask_dilation)
     else:
         mask_alpha = mask.astype(np.float32)
 
@@ -255,6 +273,7 @@ class Extractor:
                 vmin=global_vmin,
                 vmax=global_vmax,
                 smooth_mask_edges=self.config.smooth_mask_edges,
+                mask_dilation=self.config.mask_dilation,
             )
             uint16 = depth_to_uint16(depth, invert=False)
             frame_filename = f"frame_{i:04d}.png"
@@ -288,6 +307,7 @@ def extract_disparity_frames(
     invert: bool = False,
     background_value: float = 0.0,
     smooth_mask_edges: float = 0.0,
+    mask_dilation: int = 0,  # Can be negative to erode,
 ) -> List[Path]:
     """High-level function to extract disparity frames from all segments.
 
@@ -300,6 +320,7 @@ def extract_disparity_frames(
         invert: Whether to invert depth values (default: False).
         background_value: Value for invalid pixels (default: 0.0).
         smooth_mask_edges: If > 0, apply Gaussian blur to smooth mask edges (in pixels).
+        mask_dilation: If > 0, dilate mask. If < 0, erode mask.
 
     Returns:
         List of paths to output directories.
@@ -318,6 +339,7 @@ def extract_disparity_frames(
         invert=invert,
         background_value=background_value,
         smooth_mask_edges=smooth_mask_edges,
+        mask_dilation=mask_dilation,
     )
     extractor = Extractor(config)
     return extractor.extract_all_segments()
@@ -331,6 +353,7 @@ def extract_single_segment(
     invert: bool = False,
     background_value: float = 0.0,
     smooth_mask_edges: float = 0.0,
+    mask_dilation: int = 0,  # Can be negative to erode,
 ) -> Path:
     """Extracts frames from a single segment.
 
@@ -342,6 +365,7 @@ def extract_single_segment(
         invert: Whether to invert depth values.
         background_value: Value for invalid pixels (default: 0.0).
         smooth_mask_edges: If > 0, apply Gaussian blur to smooth mask edges.
+        mask_dilation: If > 0, dilate mask. If < 0, erode mask.
 
     Returns:
         Path to the output directory containing PNG frames.
@@ -353,6 +377,7 @@ def extract_single_segment(
         invert=invert,
         background_value=background_value,
         smooth_mask_edges=smooth_mask_edges,
+        mask_dilation=mask_dilation,
     )
     extractor = Extractor(config)
     return extractor.extract_segment(segment_index)
@@ -374,6 +399,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--smooth-mask-edges", type=float, default=0.0, help="Smooth mask edges with Gaussian blur (in pixels)"
     )
+    parser.add_argument("--mask-dilation", type=int, default=0, help="Dilate (>0) or erode (<0) mask before smoothing")
 
     args = parser.parse_args()
 
@@ -385,6 +411,7 @@ if __name__ == "__main__":
             normalize=not args.no_normalize,
             invert=args.invert,
             smooth_mask_edges=args.smooth_mask_edges,
+            mask_dilation=args.mask_dilation,
         )
     else:
         extract_disparity_frames(
@@ -393,4 +420,5 @@ if __name__ == "__main__":
             normalize=not args.no_normalize,
             invert=args.invert,
             smooth_mask_edges=args.smooth_mask_edges,
+            mask_dilation=args.mask_dilation,
         )

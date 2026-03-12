@@ -150,7 +150,8 @@ def extract_depth_from_point_map(
         valid = z_depth[~np.isnan(z_depth)]
         if vmin is None or vmax is None:
             if len(valid) > 0:
-                vmin_calc, vmax_calc = np.percentile(valid, (1, 99))
+                # Use (0, 100) instead of (1, 99) to prevent clipping foreground/background extremes
+                vmin_calc, vmax_calc = np.percentile(valid, (0, 100))
                 vmin = vmin_calc if vmin is None else vmin
                 vmax = vmax_calc if vmax is None else vmax
         if vmax > vmin:
@@ -259,7 +260,8 @@ class Extractor:
                 all_z.append(z[valid])
         if all_z:
             all_z = np.concatenate(all_z)
-            global_vmin, global_vmax = np.percentile(all_z, (1, 99))
+            # Use (0, 100) instead of (1, 99) to prevent clipping foreground/background extremes
+            global_vmin, global_vmax = np.percentile(all_z, (0, 100))
         else:
             global_vmin, global_vmax = 0.0, 1.0
 

@@ -210,12 +210,12 @@ class SegmentWorker:
                 # Calculate ratio to get from original to target
                 ratio_h = original_height / cfg.height
                 ratio_w = original_width / cfg.width
-                # Use the larger ratio to ensure both dimensions fit
+                # Use the larger ratio to ensure both dimensions fit strictly for upscale
                 cfg.downsample_ratio = max(ratio_h, ratio_w)
                 if cfg.downsample_ratio > 1.0:
                     print(
                         f"Auto-calculated downsample_ratio: {cfg.downsample_ratio:.2f} "
-                        f"(from {original_width}x{original_height} to target {cfg.width}x{cfg.height})"
+                        f"(from {original_width}x{original_height} to target aspect {cfg.width}x{cfg.height})"
                     )
             else:
                 cfg.downsample_ratio = 1.0
@@ -232,12 +232,18 @@ class SegmentWorker:
         frames_tensor = torch.tensor(frames, device="cuda").float().permute(0, 3, 1, 2)
 
         if cfg.downsample_ratio > 1.0:
-            # Calculate new dimensions and ensure they're even
-            new_h = int(frames_tensor.shape[-2] / cfg.downsample_ratio)
-            new_w = int(frames_tensor.shape[-1] / cfg.downsample_ratio)
-            # Make dimensions even (required by intrinsic map calculation)
-            new_h = new_h - (new_h % 2)
-            new_w = new_w - (new_w % 2)
+            if cfg.keep_low_res and cfg.height is not None and cfg.width is not None:
+                # If keeping low res, force the exact user-requested 64-divisible target size 
+                # instead of floats to prevent internal resize jitter.
+                new_h = cfg.height
+                new_w = cfg.width
+            else:
+                # Calculate new dimensions and ensure they're even for aspect-ratio preservation
+                new_h = int(frames_tensor.shape[-2] / cfg.downsample_ratio)
+                new_w = int(frames_tensor.shape[-1] / cfg.downsample_ratio)
+                new_h = new_h - (new_h % 2)
+                new_w = new_w - (new_w % 2)
+                
             frames_tensor = F.interpolate(frames_tensor, (new_h, new_w), mode="bicubic", antialias=True).clamp(0, 1)
 
         return frames_tensor

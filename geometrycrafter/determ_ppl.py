@@ -235,7 +235,7 @@ class GeometryCrafterDetermPipeline(StableVideoDiffusionPipeline):
 
         rec_point_maps = torch.cat([rec_intrinsic_maps * mesh_grid, rec_depth_maps], dim=1).permute(0,2,3,1)
         xy, z = rec_point_maps.split([2, 1], dim=-1)
-        z = torch.clamp_max(z, 10) # for numerical stability
+        z = torch.clamp_max(z, 20) # for numerical stability
         z = torch.exp(z)
         rec_point_maps = torch.cat([xy * z, z], dim=-1)
 

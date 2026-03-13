@@ -181,8 +181,9 @@ def main(
             rec_point_map = F.interpolate(rec_point_map.permute(0,3,1,2), (original_height, original_width), mode='bilinear').permute(0, 2, 3, 1)
             rec_valid_mask = F.interpolate(rec_valid_mask.float().unsqueeze(1), (original_height, original_width), mode='bilinear').squeeze(1) > 0.5
 
+        out_file = save_path / f"{video_base_name}.npz"
         np.savez(
-            str(save_path / f"{video_base_name}.npz"), 
+            str(out_file), 
             point_map=rec_point_map.detach().cpu().numpy().astype(np.float16), 
             mask=rec_valid_mask.detach().cpu().numpy().astype(np.bool_))
         print(f"Done! Result saved to {out_file}")

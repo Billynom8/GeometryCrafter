@@ -34,6 +34,7 @@ class ExtractorConfig:
         background_value: Value for invalid pixels (default: 0.0).
         smooth_mask_edges: If > 0, apply Gaussian blur to smooth mask edges (in pixels).
         mask_dilation: If > 0, dilate mask. If < 0, erode mask.
+        gamma: Gamma correction factor (default: 1.0). < 1.0 darkens, > 1.0 lightens.
     """
 
     segments_folder: str
@@ -45,6 +46,7 @@ class ExtractorConfig:
     background_value: float = 0.0
     smooth_mask_edges: float = 0.0
     mask_dilation: int = 0  # Can be negative to erode
+    gamma: float = 1.0
 
 
 def load_npz_segment(path: Path) -> Tuple[np.ndarray, np.ndarray, dict]:
@@ -117,6 +119,7 @@ def extract_depth_from_point_map(
     vmax: Optional[float] = None,
     smooth_mask_edges: float = 0.0,
     mask_dilation: int = 0,  # Can be negative to erode,
+    gamma: float = 1.0,
 ) -> np.ndarray:
     """Extracts depth from a point map.
 
@@ -133,6 +136,7 @@ def extract_depth_from_point_map(
         vmax: Optional global max for normalization (computed if None).
         smooth_mask_edges: If > 0, apply Gaussian blur to smooth mask edges.
         mask_dilation: If > 0, dilate mask. If < 0, erode mask.
+        gamma: Gamma correction factor (applied to normalized depth).
 
     Returns:
         Depth array of shape [H, W] with values in [0, 1] if normalized,
@@ -164,6 +168,10 @@ def extract_depth_from_point_map(
         z_depth = np.where(mask, z_channel, background_value)
     if invert:
         z_depth = 1.0 - z_depth
+
+    # Apply gamma correction if requested
+    if gamma != 1.0:
+        z_depth = np.power(np.clip(z_depth, 0, 1), gamma)
 
     # Apply smooth mask edges if requested
     if smooth_mask_edges > 0:
@@ -262,7 +270,7 @@ class Extractor:
             vmin: Optional global min for normalization.
             vmax: Optional global max for normalization.
         """
-        
+
         files = self._get_segment_files()
         if segment_index >= len(files):
             raise ValueError(f"Segment index {segment_index} out of range (0-{len(files) - 1})")
@@ -305,6 +313,7 @@ class Extractor:
                 vmax=vmax,
                 smooth_mask_edges=self.config.smooth_mask_edges,
                 mask_dilation=self.config.mask_dilation,
+                gamma=self.config.gamma,
             )
             uint16 = depth_to_uint16(depth, invert=False)
             frame_filename = f"frame_{i:04d}.png"
@@ -343,6 +352,7 @@ def extract_disparity_frames(
     background_value: float = 0.0,
     smooth_mask_edges: float = 0.0,
     mask_dilation: int = 0,  # Can be negative to erode,
+    gamma: float = 1.0,
 ) -> List[Path]:
     """High-level function to extract disparity frames from all segments.
 
@@ -356,6 +366,7 @@ def extract_disparity_frames(
         background_value: Value for invalid pixels (default: 0.0).
         smooth_mask_edges: If > 0, apply Gaussian blur to smooth mask edges (in pixels).
         mask_dilation: If > 0, dilate mask. If < 0, erode mask.
+        gamma: Gamma correction factor.
 
     Returns:
         List of paths to output directories.
@@ -375,6 +386,7 @@ def extract_disparity_frames(
         background_value=background_value,
         smooth_mask_edges=smooth_mask_edges,
         mask_dilation=mask_dilation,
+        gamma=gamma,
     )
     extractor = Extractor(config)
     return extractor.extract_all_segments()
@@ -391,6 +403,7 @@ def extract_single_segment(
     mask_dilation: int = 0,  # Can be negative to erode,
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
+    gamma: float = 1.0,
 ) -> Path:
     """Extracts frames from a single segment.
 
@@ -405,6 +418,7 @@ def extract_single_segment(
         mask_dilation: If > 0, dilate mask. If < 0, erode mask.
         vmin: Optional global min for normalization.
         vmax: Optional global max for normalization.
+        gamma: Gamma correction factor.
 
     Returns:
         Path to the output directory containing PNG frames.
@@ -417,6 +431,7 @@ def extract_single_segment(
         background_value=background_value,
         smooth_mask_edges=smooth_mask_edges,
         mask_dilation=mask_dilation,
+        gamma=gamma,
     )
     extractor = Extractor(config)
     return extractor.extract_segment(segment_index, vmin=vmin, vmax=vmax)
@@ -439,6 +454,7 @@ if __name__ == "__main__":
         "--smooth-mask-edges", type=float, default=0.0, help="Smooth mask edges with Gaussian blur (in pixels)"
     )
     parser.add_argument("--mask-dilation", type=int, default=0, help="Dilate (>0) or erode (<0) mask before smoothing")
+    parser.add_argument("--gamma", type=float, default=1.0, help="Gamma correction factor (applied to normalized depth)")
 
     args = parser.parse_args()
 
@@ -451,6 +467,7 @@ if __name__ == "__main__":
             invert=args.invert,
             smooth_mask_edges=args.smooth_mask_edges,
             mask_dilation=args.mask_dilation,
+            gamma=args.gamma,
         )
     else:
         extract_disparity_frames(
@@ -460,4 +477,5 @@ if __name__ == "__main__":
             invert=args.invert,
             smooth_mask_edges=args.smooth_mask_edges,
             mask_dilation=args.mask_dilation,
+            gamma=args.gamma,
         )

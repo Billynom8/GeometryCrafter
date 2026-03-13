@@ -226,18 +226,43 @@ class Extractor:
         files = sorted(folder.glob(f"{self.config.file_prefix}*{self.config.file_ext}"))
         return files
 
-    def extract_segment(self, segment_index: int) -> Path:
+    def get_global_bounds(self) -> Tuple[float, float]:
+        """Computes min/max depth across all segments.
+
+        Returns:
+            Tuple of (vmin, vmax).
+        """
+        files = self._get_segment_files()
+        all_z_mins = []
+        all_z_maxs = []
+
+        print(f"Scanning {len(files)} segments for global depth bounds...")
+        for npz_path in files:
+            data = np.load(npz_path)
+            point_map = data["point_map"]
+            mask = data["mask"]
+            z = point_map[..., 2]
+            valid_z = z[mask]
+            if len(valid_z) > 0:
+                # Use (0, 100) percentiles for consistency with extract_depth
+                vmin, vmax = np.percentile(valid_z, (0, 100))
+                all_z_mins.append(vmin)
+                all_z_maxs.append(vmax)
+
+        if not all_z_mins:
+            return 0.0, 1.0
+
+        return min(all_z_mins), max(all_z_maxs)
+
+    def extract_segment(self, segment_index: int, vmin: Optional[float] = None, vmax: Optional[float] = None) -> Path:
         """Extracts frames from a single segment.
 
         Args:
             segment_index: Index of the segment to extract.
-
-        Returns:
-            Path to the output directory containing PNG frames.
-
-        Raises:
-            ValueError: If segment_index is out of range.
+            vmin: Optional global min for normalization.
+            vmax: Optional global max for normalization.
         """
+        
         files = self._get_segment_files()
         if segment_index >= len(files):
             raise ValueError(f"Segment index {segment_index} out of range (0-{len(files) - 1})")
@@ -251,19 +276,23 @@ class Extractor:
 
         num_frames = metadata["frame_count"]
 
-        all_z = []
-        for i in range(num_frames):
-            z = point_map[i, :, :, 2]
-            m = mask[i]
-            valid = m
-            if valid.any():
-                all_z.append(z[valid])
-        if all_z:
-            all_z = np.concatenate(all_z)
-            # Use (0, 100) instead of (1, 99) to prevent clipping foreground/background extremes
-            global_vmin, global_vmax = np.percentile(all_z, (0, 100))
-        else:
-            global_vmin, global_vmax = 0.0, 1.0
+        if vmin is None or vmax is None:
+            all_z = []
+            for i in range(num_frames):
+                z = point_map[i, :, :, 2]
+                m = mask[i]
+                valid = m
+                if valid.any():
+                    all_z.append(z[valid])
+            if all_z:
+                all_z = np.concatenate(all_z)
+                # Use (0, 100) instead of (1, 99) to prevent clipping foreground/background extremes
+                seg_vmin, seg_vmax = np.percentile(all_z, (0, 100))
+            else:
+                seg_vmin, seg_vmax = 0.0, 1.0
+            
+            vmin = vmin if vmin is not None else seg_vmin
+            vmax = vmax if vmax is not None else seg_vmax
 
         for i in range(num_frames):
             depth = extract_depth_from_point_map(
@@ -272,8 +301,8 @@ class Extractor:
                 normalize=self.config.normalize,
                 invert=self.config.invert,
                 background_value=self.config.background_value,
-                vmin=global_vmin,
-                vmax=global_vmax,
+                vmin=vmin,
+                vmax=vmax,
                 smooth_mask_edges=self.config.smooth_mask_edges,
                 mask_dilation=self.config.mask_dilation,
             )
@@ -286,7 +315,7 @@ class Extractor:
         return output_dir
 
     def extract_all_segments(self) -> List[Path]:
-        """Extracts frames from all segments.
+        """Extracts frames from all segments with global normalization.
 
         Returns:
             List of paths to output directories.
@@ -294,8 +323,12 @@ class Extractor:
         files = self._get_segment_files()
         output_dirs = []
 
+        # Find global bounds first
+        global_vmin, global_vmax = self.get_global_bounds()
+        print(f"Global depth bounds: vmin={global_vmin:.4f}, vmax={global_vmax:.4f}")
+
         for i in range(len(files)):
-            path = self.extract_segment(i)
+            path = self.extract_segment(i, vmin=global_vmin, vmax=global_vmax)
             output_dirs.append(path)
 
         print(f"Extracted {len(output_dirs)} segments")
@@ -356,6 +389,8 @@ def extract_single_segment(
     background_value: float = 0.0,
     smooth_mask_edges: float = 0.0,
     mask_dilation: int = 0,  # Can be negative to erode,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
 ) -> Path:
     """Extracts frames from a single segment.
 
@@ -368,6 +403,8 @@ def extract_single_segment(
         background_value: Value for invalid pixels (default: 0.0).
         smooth_mask_edges: If > 0, apply Gaussian blur to smooth mask edges.
         mask_dilation: If > 0, dilate mask. If < 0, erode mask.
+        vmin: Optional global min for normalization.
+        vmax: Optional global max for normalization.
 
     Returns:
         Path to the output directory containing PNG frames.
@@ -382,7 +419,7 @@ def extract_single_segment(
         mask_dilation=mask_dilation,
     )
     extractor = Extractor(config)
-    return extractor.extract_segment(segment_index)
+    return extractor.extract_segment(segment_index, vmin=vmin, vmax=vmax)
 
 
 if __name__ == "__main__":
